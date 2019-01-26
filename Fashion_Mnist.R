@@ -1,0 +1,349 @@
+#' ---
+#' title: "Fashion Mnist - Classification Project"
+#' author: "Patricia Londono"
+#' date: "January, 2019"
+#' output: 
+#'   pdf_document: default
+#' ---
+#' 
+## ----setup, include=TRUE-------------------------------------------------
+knitr::opts_chunk$set(echo = TRUE)
+
+#' 
+#' 
+#' ## Introduction
+#' 
+#' "Fashion-MNIST is a dataset of Zalando's article images-consisting of a training set of 60,000 examples and a test set of 10,000 examples. Each example is a 28x28 grayscale image, associated with a label from 10 classes. Zalando intends Fashion-MNIST to serve as a direct drop-in replacement for the original MNIST dataset for benchmarking machine learning algorithms. It shares the same image size and structure of training and testing splits." 
+#' 
+#' This project is an attempt to practice and apply the techniques learnt during the HarvardX Data Science series. The data set used for this project was downloaded from Kaggle at: 
+#' 
+#' https://www.kaggle.com/zalando-research/fashionmnist/home 
+#' 
+#' 
+#' ## Goal
+#' 
+#' Train a machine learning algorithm able to correctly classify images in the test set. 
+#' 
+#' 
+#' 
+#' ## Methodology
+#' 
+#' Four main steps will be followed: 
+#' 
+#' 1. Data loading and exploration
+#' 2. Model Training
+#' 3. Analysis of Results 
+#' 4. Conclusions
+#' 
+#' 
+#' 
+#' #### Metric
+#' The models will be evaluated based on classification accuracy.
+#' 
+#' 
+#' #### Labels
+#' Each training and test example is assigned to one of the following labels:
+#' 
+#' 0 T-shirt/top
+#' 1 Trouser
+#' 2 Pullover
+#' 3 Dress
+#' 4 Coat
+#' 5 Sandal
+#' 6 Shirt
+#' 7 Sneaker
+#' 8 Bag
+#' 9 Ankle boot 
+#' 
+#' 
+#' 
+#' ## 1. Data loading and exploration
+#' 
+## ----1. Data loading-----------------------------------------------------
+
+# Loading required libraries
+library(tidyverse)
+library(caret)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+library("RColorBrewer") 
+
+
+# loading the datasets 
+
+# Training Dataset
+fashion_mnist_ <- read_csv('fashion-mnist_train.csv')
+fashion_mnist <- fashion_mnist_ %>% select(-label)
+labels <- factor(fashion_mnist_$label)
+
+# Test Dataset
+fmnist_test_ <- read_csv('fashion-mnist_test.csv')
+fmnist_test <- fmnist_test_ %>% select(-label)
+test_labels <- fmnist_test_$label
+
+
+
+
+#' 
+#' 
+#' ####Dataset dimensions
+## ----Dataset dimensions--------------------------------------------------
+dim(fashion_mnist_)
+
+#' 
+#' 
+#' ####Minimum and Maximum Values
+## ----Minimum and Maximum Values------------------------------------------
+fashion_mnist_ %>% 
+  summarize(min_value = min(fashion_mnist_),
+            max_value = max(fashion_mnist_))
+
+#' 
+#' 
+#' ####Dataset structure
+## ----Dataset structure---------------------------------------------------
+head(fashion_mnist_)
+
+#' 
+#' 
+#' ####Displaying the images
+## ----Displaying the images-----------------------------------------------
+# Dividing plot-space, into 3 X 3 panels
+par(mfrow = c(4, 4), pty = "s", mar = c(1, 1, 1, 1), xaxt = "n", yaxt = "n")
+
+#Plotting the images
+lapply(1:9, 
+       function(x) image(
+         matrix(unlist(fashion_mnist_[x,-1]),ncol = 28,byrow = T),
+         col=cm.colors(255), 
+         axes = FALSE))
+
+#' 
+#' 
+#' ####Pixels Variance
+#' Exploring how pixel values vary from label to label.
+## ----Pixels Variance-----------------------------------------------------
+# Getting rows average
+avg <- rowMeans(fashion_mnist)
+
+# Plotting 
+data.frame(labels = as.factor(labels), row_averages = avg) %>%
+  ggplot(aes(labels, row_averages)) +
+  geom_boxplot()
+
+#' From this plot, we can see that Sandals and Sneakers (labels 5 and 7) are the items that use less ink and Pullover and Coats (labels 2 and 4) using the most. 
+#' 
+#' 
+#' 
+#' ## 2. Model Training
+#' 
+#' 
+#' #### Data Preprocessing 
+#' Creating test and training datasets
+## ----removing labels-----------------------------------------------------
+# Training Dataset
+fashion_mnist <- fashion_mnist_ %>% select(-label)
+labels <- factor(fashion_mnist_$label)
+
+# Test Dataset
+fmnist_test <- fmnist_test_ %>% select(-label)
+test_labels <- fmnist_test_$label
+
+#' 
+#' 
+#' #### Finding High Variability predictors
+#' This step is important as it will help us filter out areas of the images that don't contain much information (features with minimal variability)
+## ----Number of genres----------------------------------------------------
+library(matrixStats)
+fmnist <- as.matrix(fashion_mnist)
+sds <- colSds(fmnist)
+qplot(sds, bins = 256, color = I("black"))
+
+#' 
+#' 
+#' #### Removing columns with near zero variability
+## ----distribution rantings-----------------------------------------------
+nzv <- nearZeroVar(fmnist)
+col_index <- setdiff(1:ncol(fmnist), nzv)
+length(col_index)
+
+#' After removing columns with low variability we end keeping only 226 columns for training. 
+#' 
+## ----adding column names-------------------------------------------------
+# adding column names as required by the caret package
+colnames(fmnist) <- 1:ncol(fmnist)
+
+#' 
+#' 
+#' #### Trying KNN 
+## ----Finding optimal k---------------------------------------------------
+# Finding optimal value of k
+control <- trainControl(method = "cv", number = 5, p = .9)
+train_knn <- train(fmnist[,col_index], labels, 
+                   method = "knn", 
+                   tuneGrid = data.frame(k = c(4,5,6,7)),
+                   trControl = control)
+ggplot(train_knn)
+
+#' 
+#' Finding best tune values
+## ------------------------------------------------------------------------
+k <- train_knn$bestTune
+k
+
+#' 
+#' 
+#' Fitting the model with optimal value of k
+## ----fit-predict Knn-----------------------------------------------------
+fit_knn<- knn3(fmnist[ ,col_index], labels,  k = k)
+
+# getting predictions
+y_hat_knn <- predict(fit_knn, 
+                        fmnist_test[, col_index], 
+                        type="class")
+
+cm <- confusionMatrix(y_hat_knn, factor(test_labels))
+knn_accuracy <- cm$overall["Accuracy"]
+
+results <- data_frame(Model = "KNN", Accuracy = knn_accuracy)
+results %>% knitr::kable()
+
+#' 
+#' 
+#' Evaluating Sensitivity and Specificity
+## ----Evaluating Sensitivity and Specificity------------------------------
+cm$byClass[,1:2]
+
+#' The table above shows that shirts (label 6) are the hardest to detect and that T-shirt/top and Pullovers (labels 0 and 2) are the most commonly incorrectly predicted items 
+#' 
+#' 
+#' #### Random Forest
+## ----random forest-------------------------------------------------------
+library(Rborist)
+
+control <- trainControl(method="cv", number = 5, p = 0.8)
+grid <- expand.grid(minNode = c(1) , predFixed = c(30, 40, 50, 60, 70))
+
+train_rf <-  train(fmnist[ , col_index], 
+                   labels, 
+                   method = "Rborist", 
+                   nTree = 100,
+                   trControl = control,
+                   tuneGrid = grid,
+                   nSamp = 5000)
+
+ggplot(train_rf)
+
+#' 
+#' 
+#' The following table summarizes the optimal values for predFixed and minNode
+## ----rf best tune--------------------------------------------------------
+train_rf$bestTune
+
+#' 
+#' 
+#' Fitting the model with optimal values for minNode and predFixed
+## ----fit-predict Random Forest-------------------------------------------
+fit_rf <- Rborist(fmnist[, col_index], labels, 
+                  nTree = 1000,
+                  minNode = train_rf$bestTune$minNode,
+                  predFixed = train_rf$bestTune$predFixed)
+
+y_hat_rf <- factor(levels(labels)[predict(fit_rf, fmnist_test[ ,col_index])$yPred])
+
+cm <- confusionMatrix(y_hat_rf, factor(test_labels))
+rf_accuracy <- cm$overall["Accuracy"]
+
+results <- bind_rows(results, data_frame(Model="Random Forest", Accuracy = rf_accuracy))  
+results %>% knitr::kable()
+
+#' 
+#' 
+#' #### PCA
+## ----pca-----------------------------------------------------------------
+pca <- prcomp(fmnist)
+
+# Exploring Principal Components variance
+plot(pca$sdev)
+
+#' 
+#' 
+#' The summary table below shows that the first 24 dimensions explain about 80% of the data 
+## ----pca summary---------------------------------------------------------
+summary(pca)$importance[,1:30] %>% knitr::kable()
+
+#' 
+#' 
+#' Selecting a sample of 5000 images and plotting the first two Principal Components, it becomes apparent how classes tend to group together and how much they differ from each other. 
+## ----plot pca------------------------------------------------------------
+data.frame(PC1 = pca$x[,1], PC2 = pca$x[,2], label=factor(labels)) %>%
+  sample_n(5000) %>% 
+  ggplot(aes(PC1, PC2, fill=label))+
+  geom_point(cex=3, pch=21)
+
+#' 
+#' 
+#' The following plots will help visualizing information contained in the first PCs
+## ----pca analysis--------------------------------------------------------
+tmp <- lapply( c(1:4,781:784), function(i){
+    expand.grid(Row=1:28, Column=1:28) %>%
+      mutate(id=i, label=paste0("PC",i), 
+             value = pca$rotation[,i])
+})
+tmp <- Reduce(rbind, tmp)
+
+tmp %>% filter(id<5) %>%
+  ggplot(aes(Row, Column, fill=value)) +
+  geom_raster() +
+  scale_y_reverse() +
+  scale_fill_gradientn(colors = brewer.pal(9, "RdBu")) +
+  facet_wrap(~label, nrow = 1)
+
+#' 
+#' 
+#' Note also, in the plots below how minimal information is captured in the last PCs (mainly about the unimportant variability in the corners)
+## ----PCA analysis--------------------------------------------------------
+tmp %>% filter(id>5) %>%
+  ggplot(aes(Row, Column, fill=value)) +
+  geom_raster() +
+  scale_y_reverse() +
+  scale_fill_gradientn(colors = brewer.pal(9, "RdBu")) +
+  facet_wrap(~label, nrow = 1)
+
+#' 
+#' 
+#' #### KNN - PCA
+#' I will now retrain a KNN model but using as training data the first 200 Principal Components found.
+## ----fit-predict KNN - PCA-----------------------------------------------
+K <- 200
+pca_train <- pca$x[,1:K]
+fit_pca <- knn3(pca_train, factor(labels))
+
+# Transforming test set
+fmnist_test_m <- as.matrix(fmnist_test)
+col_means <- colMeans(fmnist_test_m)
+pca_test <- sweep(fmnist_test_m, 2, col_means) %*% pca$rotation
+pca_test <- pca_test[,1:K]
+
+# Getting predictions
+y_hat <- predict(fit_pca, pca_test, type = "class")
+
+cm <- confusionMatrix(y_hat, factor(test_labels))
+pca_accuracy <- cm$overall["Accuracy"]
+
+results <- bind_rows(results, data_frame(Model="PCA - KNN", Accuracy = pca_accuracy))  
+results %>% knitr::kable()
+
+#' 
+#' 
+#' 
+#' 
+#' ##3. Analysis of Results
+#' Three different models were explored in order to predict class labels for the Fashion Mnist dataset: KNN, Random Forest and a combination of PCA and KNN. The table above shows that PCA - KNN achieves the highest classification accuracy with the provided test set (Accuracy: 86.6%). Note that increasing the number of PCs to be used in the training model will increase slightly the accuracy but will not show a significant improvement.  
+#' 
+#' 
+#' ##4. Conclusions
+#' Several data science techniques explored in the HarvardX Data Science were implemented in this project. For future research, this exercise could be further expanded with ensembles as it could help increase accuracy by combining the results of different algorithms but significant computing power and running time would be required if intended for use with the entire dataset. The 86.6% accuracy reached in this attempt is however not to far from the current benchmark of 89.7% (http://fashion-mnist.s3-website.eu-central-1.amazonaws.com/#) achieved using traditional machine learning methods. Accuracy could be further improved with convolutional neural networks, however this approach was not explored in this exercise as it is outside of the scope of the HarvardX Data Science Series. 
+#' 
+#' I have learnt a lot in the development of this project and look forward to continue practising data science. 
